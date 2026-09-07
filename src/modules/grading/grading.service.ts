@@ -10,7 +10,35 @@ import { QuestionType, ExecutionStatus } from '@prisma/client';
 
 const execFileAsync = promisify(execFile);
 export class GradingService {
+  // Simple in-memory queue to prevent Judge0 rate limit exhaustion
+  private static gradingQueue: string[] = [];
+  private static isGrading = false;
+
   async gradeSession(sessionId: string) {
+    GradingService.gradingQueue.push(sessionId);
+    this.processQueue();
+  }
+
+  private async processQueue() {
+    if (GradingService.isGrading || GradingService.gradingQueue.length === 0) return;
+    GradingService.isGrading = true;
+
+    while (GradingService.gradingQueue.length > 0) {
+      const sessionId = GradingService.gradingQueue.shift();
+      if (sessionId) {
+        try {
+          await this.executeGrading(sessionId);
+        } catch (e) {
+          console.error(`Error grading session ${sessionId}:`, e);
+        }
+        // Add a 2-second cooldown between grading candidates to let Judge0 breathe
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+    GradingService.isGrading = false;
+  }
+
+  async executeGrading(sessionId: string) {
     try {
       const data = await gradingRepository.getUnscoredSessionData(sessionId);
       if (!data) return;
