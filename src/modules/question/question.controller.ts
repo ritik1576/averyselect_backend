@@ -34,6 +34,8 @@ const createQuestionSchema = z.discriminatedUnion('type', [
   baseQuestionSchema.extend({
     type: z.literal(QuestionType.CODING),
     testCases: z.array(testCaseSchema).min(1),
+    language: z.string().optional(),
+    starter_code: z.string().optional(),
   }),
   baseQuestionSchema.extend({
     type: z.literal(QuestionType.TEXT),
@@ -43,6 +45,8 @@ const createQuestionSchema = z.discriminatedUnion('type', [
 const updateQuestionSchema = baseQuestionSchema.partial().extend({
   options: z.array(optionSchema).optional(),
   testCases: z.array(testCaseSchema).optional(),
+  language: z.string().optional(),
+  starter_code: z.string().optional(),
 });
 
 import { catchAsync } from '../../utils/catchAsync.js';

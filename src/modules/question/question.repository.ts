@@ -23,6 +23,8 @@ export type CreateQuestionData = {
   difficulty?: number;
   options?: CreateOptionData[];
   testCases?: CreateTestCaseData[];
+  language?: string;
+  starter_code?: string;
 };
 
 export class QuestionRepository {
@@ -41,6 +43,12 @@ export class QuestionRepository {
         } : undefined,
         testCases: data.testCases ? {
           create: data.testCases
+        } : undefined,
+        questionLanguages: (data.language && data.starter_code) ? {
+          create: [{
+            language: { connectOrCreate: { where: { name: data.language }, create: { name: data.language } } },
+            starterCode: data.starter_code
+          }]
         } : undefined,
       },
       include: {
@@ -167,6 +175,13 @@ export class QuestionRepository {
         testCases: data.testCases ? {
           deleteMany: {},
           create: data.testCases
+        } : undefined,
+        questionLanguages: (data.language && data.starter_code) ? {
+          deleteMany: {},
+          create: [{
+            language: { connectOrCreate: { where: { name: data.language }, create: { name: data.language } } },
+            starterCode: data.starter_code
+          }]
         } : undefined,
       },
       include: {

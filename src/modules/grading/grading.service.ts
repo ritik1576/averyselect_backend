@@ -130,11 +130,8 @@ try:
   fn_name = '${fnName}'
   fn = locals().get(fn_name)
   if fn and callable(fn):
-      args = ${tc.input}
-      if isinstance(args, list) and not fn_name.startswith('solution'):
-          result = fn(*args)
-      else:
-          result = fn(args)
+      args = (${tc.input},)
+      result = fn(*args)
       print("\\n---AGY_RESULT_DELIM---\\n" + (json.dumps(result) if isinstance(result, (dict, list, tuple)) else str(result).lower() if isinstance(result, bool) else str(result)), end='')
   else:
       pass
@@ -153,8 +150,8 @@ try {
   }
   
   if (__fn) {
-    let args = ${tc.input};
-    const result = Array.isArray(args) ? __fn(...args) : __fn(args);
+    let args = [ ${tc.input} ];
+    const result = __fn(...args);
     if (result !== undefined) {
       process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + (typeof result === 'object' ? JSON.stringify(result) : String(result)));
     }
