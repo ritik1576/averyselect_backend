@@ -49,6 +49,7 @@ export class AssessmentController {
   create = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
     const parseResult = createAssessmentSchema.safeParse(req.body);
     if (!parseResult.success) {
+      console.log('Zod Error:', parseResult.error);
       throw new AppError(parseResult.error.issues[0].message, 400);
     }
 
@@ -96,6 +97,7 @@ export class AssessmentController {
   });
 
   update = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    console.log('Update Assessment Payload:', JSON.stringify(req.body, null, 2));
     const parseResult = updateAssessmentSchema.safeParse(req.body);
     if (!parseResult.success) {
       throw new AppError(parseResult.error.issues[0].message, 400);
@@ -104,6 +106,7 @@ export class AssessmentController {
     const companyId = req.user!.companyId;
     const { id } = req.params;
     
+    console.log('Zod Parsed Data:', JSON.stringify(parseResult.data, null, 2));
     const result = await assessmentService.updateAssessment(id, companyId, parseResult.data);
     
     res.status(200).json({
