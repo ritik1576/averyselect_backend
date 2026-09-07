@@ -1,5 +1,5 @@
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+import './src/config/env.ts';
+import { prisma } from './src/lib/prisma.ts';
 
 async function run() {
   const session = await prisma.session.findFirst({

@@ -132,7 +132,7 @@ try:
   if fn and callable(fn):
       args = (${tc.input},)
       result = fn(*args)
-      print("\\n---AGY_RESULT_DELIM---\\n" + (json.dumps(result) if isinstance(result, (dict, list, tuple)) else str(result).lower() if isinstance(result, bool) else str(result)), end='')
+      print("\\n---AGY_RESULT_DELIM---\\n" + json.dumps(result), end='')
   else:
       pass
 except Exception as e:
@@ -153,7 +153,7 @@ try {
     let args = [ ${tc.input} ];
     const result = __fn(...args);
     if (result !== undefined) {
-      process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + (typeof result === 'object' ? JSON.stringify(result) : String(result)));
+      process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + JSON.stringify(result));
     }
   } else {
     // If no function, assume they are just printing or we gracefully ignore
@@ -170,28 +170,46 @@ try {
         let stderr = '';
         let isSuccess = false;
 
-        try {
-          const response = await fetch('https://ce.judge0.com/submissions?wait=true', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              source_code: wrappedCode,
-              language_id: langConfig.id,
-              stdin: stdinPayload,
-            }),
-          });
-          
-          if (!response.ok) {
-            stderr = await response.text();
-          } else {
-            const data = await response.json();
-            stdout = data.stdout || '';
-            const compileOutput = data.compile_output || '';
-            stderr = data.stderr || compileOutput || data.message || '';
-            isSuccess = data.status?.id === 3; // 3 = Accepted
+        let retries = 3;
+        let delay = 1500;
+        while (retries > 0) {
+          try {
+            const response = await fetch('https://ce.judge0.com/submissions?wait=true', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                source_code: wrappedCode,
+                language_id: langConfig.id,
+                stdin: stdinPayload,
+              }),
+            });
+            
+            if (response.status === 429) {
+                retries--;
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+                continue;
+            }
+            
+            if (!response.ok) {
+              stderr = await response.text();
+            } else {
+              const data = await response.json();
+              stdout = data.stdout || '';
+              const compileOutput = data.compile_output || '';
+              stderr = data.stderr || compileOutput || data.message || '';
+              isSuccess = data.status?.id === 3; // 3 = Accepted
+            }
+            break;
+          } catch (e: any) {
+            retries--;
+            if (retries === 0) {
+                stderr = e.message || 'Execution failed';
+            } else {
+                await new Promise(r => setTimeout(r, delay));
+                delay *= 2;
+            }
           }
-        } catch (e: any) {
-          stderr = e.message || 'Execution failed';
         }
 
         let rawOutput = stdout.trim();
@@ -209,7 +227,14 @@ try {
         }
 
         const expectedClean = tc.expectedOutput.trim();
-        const isMatch = cleanOutput === expectedClean || cleanOutput.includes(expectedClean);
+        let isMatch = false;
+        
+        let expectedObj, actualObj;
+        try { expectedObj = JSON.parse(expectedClean); } catch(e) { expectedObj = expectedClean; }
+        try { actualObj = JSON.parse(cleanOutput); } catch(e) { actualObj = cleanOutput; }
+        
+        isMatch = JSON.stringify(expectedObj) === JSON.stringify(actualObj);
+
         if (isSuccess && isMatch) {
           tcPassed = true;
           passCount++;
