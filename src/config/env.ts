@@ -19,4 +19,4 @@ if (!parsedEnv.success) {
   process.exit(1); // Stop the app from starting if env variables are missing or invalid
 }
 
-export const env = parsedEnv.data;
+export const env = parsedEnv.data!;
