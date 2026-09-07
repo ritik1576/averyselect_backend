@@ -25,7 +25,8 @@ export class PublicService {
       durationMinutes: link.assessment.durationMinutes,
       companyName: link.assessment.company.name,
       assessmentId: link.assessment.id,
-      securitySetting: link.assessment.securitySetting
+      securitySetting: link.assessment.securitySetting,
+      questionCount: link.assessment._count.questions
     };
   }
 
@@ -127,7 +128,8 @@ export class PublicService {
         points: aq.points,
         orderIdx: aq.orderIdx,
         options: q.type === QuestionType.MULTIPLE_CHOICE ? strippedOptions : undefined,
-        testCases: q.type === QuestionType.CODING ? strippedTestCases : undefined
+        testCases: q.type === QuestionType.CODING ? strippedTestCases : undefined,
+        languages: q.type === QuestionType.CODING ? q.questionLanguages.map((l: any) => ({ languageName: l.language.name, starterCode: l.starterCode })) : undefined
       };
     });
   }

@@ -9,7 +9,8 @@ export class PublicRepository {
         assessment: {
           include: {
             company: true,
-            securitySetting: true
+            securitySetting: true,
+            _count: { select: { questions: true } }
           }
         }
       }
@@ -76,7 +77,8 @@ export class PublicRepository {
         question: {
           include: {
             options: true,
-            testCases: true
+            testCases: true,
+            questionLanguages: { include: { language: true } }
           }
         }
       },
