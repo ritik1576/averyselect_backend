@@ -30,7 +30,7 @@ app.use('/api/questions', questionRouter);
 app.use('/api/assessments', assessmentRouter);
 app.use('/api/sessions', sessionRouter);
 
-app.get('/health', (req, res) => {
+app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', environment: env.NODE_ENV });
 });
 
