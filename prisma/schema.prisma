@@ -1,0 +1,335 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id          String       @id @default(uuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  deletedAt   DateTime?
+  assessments Assessment[]
+  candidates  Candidate[]
+  questions   Question[]
+  users       User[]
+
+  @@map("companies")
+}
+
+model User {
+  id        String    @id @default(uuid())
+  email     String    @unique
+  name      String?
+  password  String
+  companyId String
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+model Question {
+  id                   String               @id @default(uuid())
+  companyId            String
+  title                String
+  text                 String
+  type                 QuestionType
+  points               Int                  @default(1)
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  deletedAt            DateTime?
+  estimatedTimeSeconds Int?
+  difficulty           Int                  @default(3)
+  assessments          AssessmentQuestion[]
+  options              Option[]
+  attempts             QuestionAttempt[]
+  questionDomains      QuestionDomain[]
+  questionLanguages    QuestionLanguage[]
+  questionResults      QuestionResult[]
+  company              Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  testCases            TestCase[]
+
+  @@map("questions")
+}
+
+model Option {
+  id         String   @id @default(uuid())
+  questionId String
+  text       String
+  isCorrect  Boolean  @default(false)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("options")
+}
+
+model TestCase {
+  id             String   @id @default(uuid())
+  questionId     String
+  input          String
+  expectedOutput String
+  isHidden       Boolean  @default(false)
+  question       Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@map("test_cases")
+}
+
+model Domain {
+  id              String           @id @default(uuid())
+  name            String           @unique
+  questionDomains QuestionDomain[]
+  resultDomains   ResultDomain[]
+
+  @@map("domains")
+}
+
+model QuestionDomain {
+  questionId String
+  domainId   String
+  domain     Domain   @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, domainId])
+  @@map("question_domains")
+}
+
+model ProgrammingLanguage {
+  id                String             @id @default(uuid())
+  name              String             @unique
+  executions        Execution[]
+  questionLanguages QuestionLanguage[]
+
+  @@map("programming_languages")
+}
+
+model QuestionLanguage {
+  questionId  String
+  languageId  String
+  starterCode String?
+  language    ProgrammingLanguage @relation(fields: [languageId], references: [id], onDelete: Cascade)
+  question    Question            @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, languageId])
+  @@map("question_languages")
+}
+
+model Assessment {
+  id              String                     @id @default(uuid())
+  companyId       String
+  title           String
+  description     String?
+  durationMinutes Int?
+  passingPercentage Float?                   @default(60)
+  isPublished     Boolean                    @default(false)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+  deletedAt       DateTime?
+  links           AssessmentLink[]
+  questions       AssessmentQuestion[]
+  securitySetting AssessmentSecuritySetting?
+  company         Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sessions        Session[]
+
+  @@map("assessments")
+}
+
+model AssessmentQuestion {
+  assessmentId String
+  questionId   String
+  orderIdx     Int
+  points       Int
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  question     Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@id([assessmentId, questionId])
+  @@map("assessment_questions")
+}
+
+model AssessmentLink {
+  id           String     @id @default(uuid())
+  assessmentId String
+  token        String     @unique
+  isActive     Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+  assessment   Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_links")
+}
+
+model AssessmentSecuritySetting {
+  id                    String     @id @default(uuid())
+  assessmentId          String     @unique
+  fullscreenRequired    Boolean    @default(false)
+  tabSwitchDetection    Boolean    @default(false)
+  windowFocusDetection  Boolean    @default(false)
+  copyPasteBlocking     Boolean    @default(false)
+  largePasteDetection   Boolean    @default(false)
+  unusualActivityAlerts Boolean    @default(false)
+  assessment            Assessment @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@map("assessment_security_settings")
+}
+
+model Candidate {
+  id        String    @id @default(uuid())
+  companyId String
+  name      String
+  email     String
+  phone     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  company   Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sessions  Session[]
+
+  @@map("candidates")
+}
+
+model Session {
+  id             String            @id @default(uuid())
+  candidateId    String
+  assessmentId   String
+  status         SessionStatus     @default(STARTED)
+  startedAt      DateTime          @default(now())
+  completedAt    DateTime?
+  activityEvents ActivityEvent[]
+  attempts       QuestionAttempt[]
+  result         Result?
+  assessment     Assessment        @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+  candidate      Candidate         @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model QuestionAttempt {
+  id          String        @id @default(uuid())
+  sessionId   String
+  questionId  String
+  status      AttemptStatus @default(NOT_STARTED)
+  answer      String?
+  timeSpentMs Int           @default(0)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  language    String?
+  executions  Execution[]
+  question    Question      @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  session     Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("question_attempts")
+}
+
+model Execution {
+  id              String              @id @default(uuid())
+  attemptId       String
+  languageId      String
+  code            String
+  status          ExecutionStatus     @default(QUEUED)
+  output          String?
+  testCaseResults Json?
+  createdAt       DateTime            @default(now())
+  executionTimeMs Int?
+  attempt         QuestionAttempt     @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  language        ProgrammingLanguage @relation(fields: [languageId], references: [id], onDelete: Cascade)
+
+  @@map("executions")
+}
+
+model ActivityEvent {
+  id        String            @id @default(uuid())
+  sessionId String
+  eventType ActivityEventType
+  details   Json?
+  createdAt DateTime          @default(now())
+  session   Session           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("activity_events")
+}
+
+model Result {
+  id              String           @id @default(uuid())
+  sessionId       String           @unique
+  totalScore      Float            @default(0)
+  maxScore        Float            @default(0)
+  percentage      Float            @default(0)
+  isPassed        Boolean?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  questionResults QuestionResult[]
+  domainResults   ResultDomain[]
+  session         Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@map("results")
+}
+
+model QuestionResult {
+  id         String   @id @default(uuid())
+  resultId   String
+  questionId String
+  score      Float
+  maxScore   Float
+  isCorrect  Boolean
+  feedback   String?
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  result     Result   @relation(fields: [resultId], references: [id], onDelete: Cascade)
+
+  @@map("question_results")
+}
+
+model ResultDomain {
+  id         String @id @default(uuid())
+  resultId   String
+  domainId   String
+  score      Float
+  maxScore   Float
+  percentage Float
+  domain     Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+  result     Result @relation(fields: [resultId], references: [id], onDelete: Cascade)
+
+  @@map("result_domains")
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  CODING
+  TEXT
+}
+
+enum SessionStatus {
+  STARTED
+  IN_PROGRESS
+  COMPLETED
+  TERMINATED
+}
+
+enum AttemptStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+}
+
+enum ExecutionStatus {
+  QUEUED
+  RUNNING
+  PASSED
+  FAILED
+  ERROR
+}
+
+enum ActivityEventType {
+  ASSESSMENT_STARTED
+  QUESTION_OPENED
+  CODE_CHANGED
+  CODE_EXECUTED
+  TAB_SWITCHED
+  FULLSCREEN_EXITED
+  FULLSCREEN_ENTERED
+  COPY_ATTEMPTED
+  LARGE_PASTE_DETECTED
+  QUESTION_SUBMITTED
+  ASSESSMENT_SUBMITTED
+}
