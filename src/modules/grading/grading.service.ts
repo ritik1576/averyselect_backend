@@ -9,6 +9,34 @@ import { gradingRepository } from './grading.repository.js';
 import { QuestionType, ExecutionStatus } from '@prisma/client';
 
 const execFileAsync = promisify(execFile);
+
+/**
+ * Converts test case input JSON into competitive-programming style stdin for C++/Java.
+ * Arrays → first line: count, second line: space-separated (numbers) or one-per-line (strings).
+ * Strings → plain value (no quotes). Scalars → string form. Raw text → pass-through.
+ */
+function normalizeStdinForNative(input: string): string {
+  const raw = (input ?? '').trim();
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      const count = parsed.length;
+      const isStringArray = parsed.every((x: any) => typeof x === 'string');
+      if (isStringArray) {
+        return `${count}\n${parsed.join('\n')}`;
+      } else {
+        return `${count}\n${parsed.join(' ')}`;
+      }
+    } else if (typeof parsed === 'string') {
+      return parsed;
+    } else {
+      return String(parsed);
+    }
+  } catch {
+    return raw;
+  }
+}
+
 export class GradingService {
   // Simple in-memory queue to prevent Judge0 rate limit exhaustion
   private static gradingQueue: string[] = [];
@@ -128,16 +156,7 @@ export class GradingService {
 
         if (language === 'cpp' || language === 'java') {
           wrappedCode = code; // No wrapper, reads from stdin
-          try {
-            const parsedArgs = JSON.parse(tc.input);
-            if (Array.isArray(parsedArgs)) {
-              stdinPayload = parsedArgs.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join('\n');
-            } else {
-              stdinPayload = String(parsedArgs);
-            }
-          } catch (e) {
-            stdinPayload = String(tc.input);
-          }
+          stdinPayload = normalizeStdinForNative(tc.input);
         } else {
           // Javascript and Python wrappers
           let fnName = 'solution';
@@ -202,13 +221,13 @@ try {
         let delay = 1500;
         while (retries > 0) {
           try {
-            const response = await fetch('https://ce.judge0.com/submissions?wait=true', {
+            const response = await fetch('https://ce.judge0.com/submissions?wait=true&base64_encoded=true', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                source_code: wrappedCode,
+                source_code: Buffer.from(wrappedCode).toString('base64'),
                 language_id: langConfig.id,
-                stdin: stdinPayload,
+                stdin: Buffer.from(stdinPayload).toString('base64'),
               }),
             });
             
@@ -223,9 +242,10 @@ try {
               stderr = await response.text();
             } else {
               const data = await response.json();
-              stdout = data.stdout || '';
-              const compileOutput = data.compile_output || '';
-              stderr = data.stderr || compileOutput || data.message || '';
+              const decodeB64 = (val: string | null | undefined) => val ? Buffer.from(val, 'base64').toString('utf8') : '';
+              stdout = decodeB64(data.stdout);
+              const compileOutput = decodeB64(data.compile_output);
+              stderr = decodeB64(data.stderr) || compileOutput || data.message || '';
               isSuccess = data.status?.id === 3; // 3 = Accepted
             }
             break;
@@ -249,21 +269,27 @@ try {
         tcOutput = cleanOutput;
         globalOutput += stdout.trim() + '\n';
         
-        if (stderr && !isSuccess) {
+        // Hard error = runtime/compile error (status != Accepted AND != Wrong Answer)
+        // JVM/compiler warnings in stderr are OK as long as code ran (isSuccess or at least produced output)
+        const hasHardError = !isSuccess && !cleanOutput;
+        if (stderr && hasHardError) {
            tcError = stderr.trim();
            globalOutput += tcError + '\n';
         }
 
-        const expectedClean = tc.expectedOutput.trim();
+        const normalizeOut = (s: string) => s.trim().split('\n').map(l => l.trim()).filter(l => l !== '').join('\n');
+        const expectedClean = normalizeOut(tc.expectedOutput);
+        const actualClean = normalizeOut(cleanOutput);
         let isMatch = false;
         
         let expectedObj, actualObj;
         try { expectedObj = JSON.parse(expectedClean); } catch(e) { expectedObj = expectedClean; }
-        try { actualObj = JSON.parse(cleanOutput); } catch(e) { actualObj = cleanOutput; }
+        try { actualObj = JSON.parse(actualClean); } catch(e) { actualObj = actualClean; }
         
         isMatch = JSON.stringify(expectedObj) === JSON.stringify(actualObj);
 
-        if (isSuccess && isMatch) {
+        // Pass if output matches and no hard error (ignore stderr warnings for C++/Java)
+        if (isMatch && !hasHardError) {
           tcPassed = true;
           passCount++;
         }
