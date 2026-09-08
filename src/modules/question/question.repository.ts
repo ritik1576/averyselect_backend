@@ -54,6 +54,7 @@ export class QuestionRepository {
       include: {
         options: true,
         testCases: true,
+        questionLanguages: { include: { language: true } },
         _count: { select: { assessments: true } },
       }
     });
@@ -92,7 +93,8 @@ export class QuestionRepository {
         include: {
           options: true,
           testCases: true,
-          _count: { select: { assessments: true } },
+          questionLanguages: { include: { language: true } },
+        _count: { select: { assessments: true } },
         },
         orderBy: { createdAt: 'desc' },
         skip,
@@ -132,6 +134,7 @@ export class QuestionRepository {
       include: {
         options: true,
         testCases: true,
+        questionLanguages: { include: { language: true } },
         _count: { select: { assessments: true } },
       }
     });
@@ -187,6 +190,7 @@ export class QuestionRepository {
       include: {
         options: true,
         testCases: true,
+        questionLanguages: { include: { language: true } },
         _count: { select: { assessments: true } },
       }
     });

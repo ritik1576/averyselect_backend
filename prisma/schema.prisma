@@ -72,6 +72,7 @@ model Option {
 model TestCase {
   id             String   @id @default(uuid())
   questionId     String
+  title          String?
   input          String
   expectedOutput String
   isHidden       Boolean  @default(false)
