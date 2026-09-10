@@ -431,18 +431,15 @@ function buildJsWrapper(code: string, fnName: string, inputArgs: unknown[]): str
   return `
 ${code}
 {
-  let __fn = null;
-  if (typeof module !== 'undefined' && typeof module.exports === 'function') {
-    __fn = module.exports;
-  } else if (typeof ${fnName} === 'function') {
-    __fn = ${fnName};
+  // functionContract.functionName is authoritative — never use module.exports to override it.
+  if (typeof ${fnName} !== 'function') {
+    throw new ReferenceError('Configured function "' + '${fnName}' + '" is not defined or is not callable.');
   }
-  if (__fn) {
-    let args = ${jsArgs};
-    const result = __fn(...args);
-    if (result !== undefined) {
-      process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + JSON.stringify(result, (k, v) => typeof v === 'bigint' ? v.toString() : v));
-    }
+  const __fn = ${fnName};
+  let args = ${jsArgs};
+  const result = __fn(...args);
+  if (result !== undefined) {
+    process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + JSON.stringify(result, (k, v) => typeof v === 'bigint' ? v.toString() : v));
   }
 }
 `;
