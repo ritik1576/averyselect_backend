@@ -154,18 +154,179 @@ export class GradingService {
         let wrappedCode = '';
         let stdinPayload = '';
 
-        if (language === 'cpp' || language === 'java') {
-          wrappedCode = code; // No wrapper, reads from stdin
-          stdinPayload = normalizeStdinForNative(tc.input);
+        if (language === 'cpp') {
+          const hasMain = /\b(?:int|void|auto)\s+main\s*\(/.test(code);
+          if (hasMain) {
+            wrappedCode = code;
+            stdinPayload = normalizeStdinForNative(tc.input);
+          } else {
+            let cppFn = 'solution';
+            if (/\b(?:solution)\s*\(/.test(code)) {
+              cppFn = 'solution';
+            } else if (/\b(?:solve)\s*\(/.test(code)) {
+              cppFn = 'solve';
+            } else {
+              const cppMatch = code.match(/(?:[\w:<>*&]+)\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{/);
+              if (cppMatch && !['if', 'while', 'for', 'switch', 'catch', 'main'].includes(cppMatch[1])) {
+                cppFn = cppMatch[1];
+              }
+            }
+
+            let cppArg = '';
+            if (tc.input) {
+              let trimmed = tc.input.trim();
+              if (trimmed.endsWith(';')) trimmed = trimmed.slice(0, -1).trim();
+              const solveMatch = trimmed.match(/^solve\((.*)\)$/);
+              if (solveMatch) trimmed = solveMatch[1].trim();
+
+              if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+                cppArg = trimmed.replace(/\[/g, '{').replace(/\]/g, '}');
+              } else {
+                cppArg = trimmed;
+              }
+            }
+
+            wrappedCode = `
+#include <iostream>
+#include <vector>
+#include <string>
+#include <algorithm>
+#include <map>
+#include <unordered_map>
+#include <set>
+#include <unordered_set>
+
+${code}
+
+template<typename T> void __print_res(const T& val) { std::cout << val; }
+inline void __print_res(bool val) { std::cout << (val ? "true" : "false"); }
+inline void __print_res(char val) { std::cout << "\\"" << val << "\\""; }
+inline void __print_res(const std::string& val) { std::cout << "\\"" << val << "\\""; }
+template<typename T> void __print_res(const std::vector<T>& vec) {
+    std::cout << "[";
+    for (size_t i = 0; i < vec.size(); ++i) {
+        __print_res(vec[i]);
+        if (i + 1 < vec.size()) std::cout << ", ";
+    }
+    std::cout << "]";
+}
+
+int main() {
+    try {
+        auto res = ${cppFn}(${cppArg});
+        std::cout << "\\n---AGY_RESULT_DELIM---\\n";
+        __print_res(res);
+        std::cout << std::endl;
+    } catch (const std::exception& e) {
+        std::cerr << e.what() << std::endl;
+        return 1;
+    } catch (...) {
+        std::cerr << "Runtime error" << std::endl;
+        return 1;
+    }
+    return 0;
+}
+`;
+          }
+        } else if (language === 'java') {
+          const hasMain = /\bpublic\s+static\s+void\s+main\s*\(/.test(code) || /\bvoid\s+main\s*\(/.test(code);
+          if (hasMain) {
+            wrappedCode = code;
+            stdinPayload = normalizeStdinForNative(tc.input);
+          } else {
+            let javaArg = '';
+            if (tc.input) {
+              let trimmed = tc.input.trim();
+              if (trimmed.endsWith(';')) trimmed = trimmed.slice(0, -1).trim();
+              const solveMatch = trimmed.match(/^solve\((.*)\)$/);
+              if (solveMatch) trimmed = solveMatch[1].trim();
+
+              if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+                try {
+                  const parsed = JSON.parse(trimmed);
+                  if (parsed.every((x: any) => typeof x === 'number')) {
+                    javaArg = `new int[]{${parsed.join(', ')}}`;
+                  } else if (parsed.every((x: any) => typeof x === 'string')) {
+                    javaArg = `new String[]{${parsed.map((s: any) => JSON.stringify(s)).join(', ')}}`;
+                  } else {
+                    javaArg = `new Object[]{${parsed.map((x: any) => JSON.stringify(x)).join(', ')}}`;
+                  }
+                } catch {
+                  javaArg = `new int[]{${trimmed.slice(1, -1)}}`;
+                }
+              } else {
+                javaArg = trimmed;
+              }
+            }
+
+            let sanitizedCode = code.replace(/public\s+class\s+([A-Za-z0-9_]+)/g, 'class $1');
+            let className = 'Solution';
+            const classMatch = sanitizedCode.match(/class\s+([A-Za-z0-9_]+)/);
+            if (classMatch) className = classMatch[1];
+
+            let javaFn = 'solution';
+            if (/\b(?:solution)\s*\(/.test(sanitizedCode)) {
+              javaFn = 'solution';
+            } else if (/\b(?:solve)\s*\(/.test(sanitizedCode)) {
+              javaFn = 'solve';
+            } else {
+              const methodMatch = sanitizedCode.match(/(?:public|static|final|[\w<>\[\],]+)\s+([a-zA-Z0-9_]+)\s*\([^)]*\)\s*\{/);
+              if (methodMatch && !['if', 'while', 'for', 'switch', 'catch', 'main', className].includes(methodMatch[1])) {
+                javaFn = methodMatch[1];
+              }
+            }
+
+            const isStatic = new RegExp(`static\\s+[\\w<>\[\\],]+\\s+${javaFn}\\s*\\(`).test(sanitizedCode);
+            const callExpr = isStatic ? `${className}.${javaFn}(${javaArg})` : `new ${className}().${javaFn}(${javaArg})`;
+
+            wrappedCode = `
+import java.util.*;
+import java.io.*;
+
+${sanitizedCode}
+
+public class Main {
+    public static void main(String[] args) {
+        try {
+            Object res = ${callExpr};
+            String output;
+            if (res instanceof int[]) {
+                output = Arrays.toString((int[]) res);
+            } else if (res instanceof Object[]) {
+                output = Arrays.deepToString((Object[]) res);
+            } else {
+                output = String.valueOf(res);
+            }
+            System.out.println("\\n---AGY_RESULT_DELIM---\\n" + output);
+        } catch (Exception e) {
+            e.printStackTrace();
+            System.exit(1);
+        }
+    }
+}
+`;
+          }
         } else {
           // Javascript and Python wrappers
           let fnName = 'solution';
-          const pyMatch = code.match(/def\s+([a-zA-Z0-9_]+)\s*\(/);
-          const jsMatch = code.match(/(?:function\s+([a-zA-Z0-9_]+)\s*\()|(?:(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:function|\(.*=>|.*=>))/);
-          if (language === 'python' && pyMatch) {
-            fnName = pyMatch[1];
-          } else if (jsMatch) {
-            fnName = jsMatch[1] || jsMatch[2] || 'solution';
+          if (language === 'python') {
+            if (/\bdef\s+solution\s*\(/.test(code)) {
+              fnName = 'solution';
+            } else if (/\bdef\s+solve\s*\(/.test(code)) {
+              fnName = 'solve';
+            } else {
+              const pyMatch = code.match(/def\s+([a-zA-Z0-9_]+)\s*\(/);
+              if (pyMatch) fnName = pyMatch[1];
+            }
+          } else {
+            if (/\b(?:function\s+solution\s*\(|(?:const|let|var)\s+solution\s*=)/.test(code)) {
+              fnName = 'solution';
+            } else if (/\b(?:function\s+solve\s*\(|(?:const|let|var)\s+solve\s*=)/.test(code)) {
+              fnName = 'solve';
+            } else {
+              const jsMatch = code.match(/(?:function\s+([a-zA-Z0-9_]+)\s*\()|(?:(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:function|\(.*=>|.*=>))/);
+              if (jsMatch) fnName = jsMatch[1] || jsMatch[2] || 'solution';
+            }
           }
 
           if (language === 'python') {
