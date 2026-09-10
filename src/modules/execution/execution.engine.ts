@@ -430,7 +430,7 @@ function buildJsWrapper(code: string, fnName: string, inputArgs: unknown[]): str
 
   return `
 ${code}
-try {
+{
   let __fn = null;
   if (typeof module !== 'undefined' && typeof module.exports === 'function') {
     __fn = module.exports;
@@ -444,8 +444,6 @@ try {
       process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + JSON.stringify(result, (k, v) => typeof v === 'bigint' ? v.toString() : v));
     }
   }
-} catch (e) {
-  process.stdout.write(e.toString());
 }
 `;
 }
