@@ -418,10 +418,16 @@ import sys
 import json
 fn_name = '${fnName}'
 fn = locals().get(fn_name)
-if fn and callable(fn):
-    args = json.loads('${argsJson}')
-    result = fn(*args)
-    print("\\n---AGY_RESULT_DELIM---\\n" + json.dumps(result), end='')
+
+if not fn or not callable(fn):
+    raise RuntimeError(
+        f'Configured function "{fn_name}" is not defined or is not callable.'
+    )
+
+args = json.loads('${argsJson}')
+result = fn(*args)
+
+print("\\n---AGY_RESULT_DELIM---\\n" + json.dumps(result), end='')
 `;
 }
 
