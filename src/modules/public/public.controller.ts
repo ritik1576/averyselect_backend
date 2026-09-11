@@ -87,6 +87,25 @@ export class PublicController {
       data
     });
   });
+
+  runCode = catchAsync(async (req: Request, res: Response, _next: NextFunction) => {
+    const { sessionId } = req.sessionData!;
+    const { questionId } = req.params;
+
+    const schema = z.object({
+      code: z.string().min(1, 'code is required'),
+      language: z.string().min(1, 'language is required'),
+    });
+    const { code, language } = schema.parse(req.body);
+
+    const result = await publicService.runCode(sessionId, questionId, code, language);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+    });
+  });
+
 }
 
 export const publicController = new PublicController();
