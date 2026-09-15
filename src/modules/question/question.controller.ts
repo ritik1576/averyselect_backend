@@ -2,7 +2,8 @@ import { Request, Response, NextFunction } from 'express';
 import { questionService } from './question.service.js';
 import { z } from 'zod';
 import { AppError } from '../../utils/AppError.js';
-import { QuestionType } from '@prisma/client';
+import { validateFunctionTestCases } from './question.validation.js';
+import { QuestionType, ExecutionMode, ComparisonMode } from '@prisma/client';
 
 // Shared base schema
 const baseQuestionSchema = z.object({
@@ -26,6 +27,35 @@ const testCaseSchema = z.object({
 });
 
 // Discriminated union to strictly enforce the shape based on 'type'
+
+// Function Contract validation
+const identifierRegex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
+const typeVocabulary = z.enum([
+  'int', 'double', 'boolean', 'string',
+  'int[]', 'double[]', 'boolean[]', 'string[]'
+]);
+
+const parameterSchema = z.object({
+  name: z.string().min(1, 'Parameter name required').regex(identifierRegex, 'Invalid parameter name (must be valid programming identifier)'),
+  type: typeVocabulary
+});
+
+const functionContractSchema = z.object({
+  functionName: z.string().min(1, 'Function name required').regex(identifierRegex, 'Invalid function name (must be valid programming identifier)'),
+  parameters: z.array(parameterSchema),
+  returnType: typeVocabulary
+}).superRefine((data, ctx) => {
+  const names = data.parameters.map(p => p.name);
+  if (new Set(names).size !== names.length) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'Parameter names must be unique within the contract',
+      path: ['parameters']
+    });
+  }
+});
+
 const createQuestionSchema = z.discriminatedUnion('type', [
   baseQuestionSchema.extend({
     type: z.literal(QuestionType.MULTIPLE_CHOICE),
@@ -36,6 +66,22 @@ const createQuestionSchema = z.discriminatedUnion('type', [
     testCases: z.array(testCaseSchema).min(1),
     language: z.string().optional(),
     starter_code: z.string().optional(),
+    executionMode: z.nativeEnum(ExecutionMode).optional(),
+    functionContract: functionContractSchema.nullable().optional(),
+    comparisonMode: z.nativeEnum(ComparisonMode).optional(),
+  }).superRefine((data, ctx) => {
+    if (data.executionMode === 'FUNCTION' && data.functionContract && data.testCases) {
+      const { isValid, issues } = validateFunctionTestCases(data.functionContract, data.testCases);
+      if (!isValid) {
+        for (const issue of issues) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: issue.message,
+            path: issue.path
+          });
+        }
+      }
+    }
   }),
   baseQuestionSchema.extend({
     type: z.literal(QuestionType.TEXT),
@@ -47,7 +93,23 @@ const updateQuestionSchema = baseQuestionSchema.partial().extend({
   testCases: z.array(testCaseSchema).optional(),
   language: z.string().optional(),
   starter_code: z.string().optional(),
-});
+  executionMode: z.nativeEnum(ExecutionMode).optional(),
+  functionContract: functionContractSchema.nullable().optional(),
+  comparisonMode: z.nativeEnum(ComparisonMode).optional(),
+}).superRefine((data, ctx) => {
+    if (data.executionMode === 'FUNCTION' && data.functionContract && data.testCases) {
+      const { isValid, issues } = validateFunctionTestCases(data.functionContract, data.testCases);
+      if (!isValid) {
+        for (const issue of issues) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: issue.message,
+            path: issue.path
+          });
+        }
+      }
+    }
+  });
 
 import { catchAsync } from '../../utils/catchAsync.js';
 

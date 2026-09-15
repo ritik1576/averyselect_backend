@@ -86,25 +86,36 @@ export class PublicRepository {
     });
   }
 
-  async upsertQuestionAttempt(sessionId: string, questionId: string, answer: string, language?: string) {
-    // Find existing attempt
-    const existing = await prisma.questionAttempt.findFirst({
-      where: { sessionId, questionId }
-    });
 
-    if (existing) {
-      return await prisma.questionAttempt.update({
-        where: { id: existing.id },
-        data: { 
-          answer,
-          language,
-          status: AttemptStatus.SUBMITTED
+  async verifyQuestionInAssessment(questionId: string, assessmentId: string) {
+    const aq = await prisma.assessmentQuestion.findUnique({
+      where: {
+        assessmentId_questionId: {
+          assessmentId,
+          questionId
         }
-      });
-    }
+      },
+      include: {
+        question: { select: { deletedAt: true } }
+      }
+    });
+    return aq !== null && aq.question.deletedAt === null;
+  }
 
-    return await prisma.questionAttempt.create({
-      data: {
+  async upsertQuestionAttempt(sessionId: string, questionId: string, answer: string, language?: string) {
+    return await prisma.questionAttempt.upsert({
+      where: {
+        sessionId_questionId: {
+          sessionId,
+          questionId
+        }
+      },
+      update: {
+        answer,
+        language,
+        status: AttemptStatus.SUBMITTED
+      },
+      create: {
         sessionId,
         questionId,
         answer,

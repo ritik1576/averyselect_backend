@@ -1,49 +1,30 @@
-import vm from 'node:vm';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import fs from 'fs/promises';
-import path from 'path';
-import os from 'os';
-import crypto from 'crypto';
 import { gradingRepository } from './grading.repository.js';
 import { QuestionType, ExecutionStatus } from '@prisma/client';
-
-const execFileAsync = promisify(execFile);
-
-/**
- * Converts test case input JSON into competitive-programming style stdin for C++/Java.
- * Arrays → first line: count, second line: space-separated (numbers) or one-per-line (strings).
- * Strings → plain value (no quotes). Scalars → string form. Raw text → pass-through.
- */
-function normalizeStdinForNative(input: string): string {
-  const raw = (input ?? '').trim();
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      const count = parsed.length;
-      const isStringArray = parsed.every((x: any) => typeof x === 'string');
-      if (isStringArray) {
-        return `${count}\n${parsed.join('\n')}`;
-      } else {
-        return `${count}\n${parsed.join(' ')}`;
-      }
-    } else if (typeof parsed === 'string') {
-      return parsed;
-    } else {
-      return String(parsed);
-    }
-  } catch {
-    return raw;
-  }
-}
+import { executionEngine, type EngineResult } from '../execution/execution.engine.js';
 
 export class GradingService {
   // Simple in-memory queue to prevent Judge0 rate limit exhaustion
   private static gradingQueue: string[] = [];
   private static isGrading = false;
 
+  async recoverIncompleteGrading() {
+    try {
+      const incompleteSessions = await gradingRepository.getIncompleteGradingSessions();
+      if (incompleteSessions.length > 0) {
+        console.log(`[GradingRecovery] Found ${incompleteSessions.length} incomplete grading sessions. Resuming...`);
+        for (const session of incompleteSessions) {
+          this.gradeSession(session.id);
+        }
+      }
+    } catch (e) {
+      console.error('[GradingRecovery] Error during startup recovery:', e);
+    }
+  }
+
   async gradeSession(sessionId: string) {
-    GradingService.gradingQueue.push(sessionId);
+    if (!GradingService.gradingQueue.includes(sessionId)) {
+      GradingService.gradingQueue.push(sessionId);
+    }
     this.processQueue();
   }
 
@@ -68,6 +49,12 @@ export class GradingService {
 
   async executeGrading(sessionId: string) {
     try {
+      // 10A Idempotency Guard
+      const existingResult = await gradingRepository.getResultBySessionId(sessionId);
+      if (existingResult && existingResult.isPassed !== null) {
+        return;
+      }
+
       const data = await gradingRepository.getUnscoredSessionData(sessionId);
       if (!data) return;
       if (data.status !== 'COMPLETED') return;
@@ -75,46 +62,104 @@ export class GradingService {
       const result = await gradingRepository.createResult(sessionId);
       
       let totalScore = 0;
-      let maxScore = 0;
+      // Authoritative maxScore must be the sum of AssessmentQuestion.points for ALL questions
+      // assigned to this assessment, regardless of whether candidate attempted them.
+      const assignedQuestions = data.assessment?.questions ?? await gradingRepository.getAssessmentQuestionMapping(data.assessmentId);
+      const maxScore = assignedQuestions.reduce((sum, aq) => sum + (aq.points || 0), 0);
 
       // Iterate through attempts and evaluate
       for (const attempt of data.attempts) {
         const question = attempt.question;
-        const qMaxScore = question.points || 10; // Use actual question points instead of hardcoded 10
-        maxScore += qMaxScore;
+        // AssessmentQuestion.points is the ONLY authoritative score for a question
+        // within this assessment. The assessments array is pre-filtered to exactly
+        // session.assessmentId by getUnscoredSessionData, so [0] is always THIS
+        // assessment's row (if it exists).
+        // If the row is missing (data-integrity failure), log and skip — do NOT fall
+        // back to Question.points, which is the question-bank default and NOT
+        // per-assessment authoritative.
+        const aqPoints = question.assessments[0]?.points;
+        if (aqPoints === undefined) {
+          console.error(
+            `[grading] CONFIGURATION_ERROR: No AssessmentQuestion row found for ` +
+            `question ${question.id} in session ${sessionId}. Skipping attempt.`
+          );
+          continue;
+        }
+        const qMaxScore = aqPoints;
 
         let qScore = 0;
         let isCorrect = false;
 
         if (question.type === QuestionType.MULTIPLE_CHOICE) {
-          const selectedOption = question.options.find(opt => opt.id === (attempt.answer || ''));
+          const selectedOption = question.options.find((opt: any) => opt.id === (attempt.answer || ''));
           if (selectedOption && selectedOption.isCorrect) {
             isCorrect = true;
             qScore = qMaxScore;
           }
           await gradingRepository.createQuestionResult(result.id, question.id, qScore, qMaxScore, isCorrect);
-        } 
+        }
         else if (question.type === QuestionType.CODING) {
-          // Execution logic
-          const executionResult = await this.executeCode(attempt.answer || '', attempt.language || 'javascript', question.testCases);
+          const attemptLanguage = (attempt.language || '').trim().toLowerCase();
+          const configuredLanguages = (question.questionLanguages || []).map((ql: any) => ql.language.name.toLowerCase());
           
+          if (!configuredLanguages.includes(attemptLanguage)) {
+            console.error(`[grading] CONFIGURATION_ERROR: Unauthorized language '${attemptLanguage}' for question ${question.id}. Skipping execution.`);
+            
+            await gradingRepository.createExecution(
+              attempt.id,
+              attemptLanguage || 'unknown',
+              attempt.answer || '',
+              ExecutionStatus.ERROR,
+              `CONFIGURATION_ERROR: Language ${attemptLanguage} is not allowed for this question.`,
+              [],
+              0
+            );
+
+            await gradingRepository.createQuestionResult(result.id, question.id, 0, qMaxScore, false);
+            totalScore += 0;
+            continue;
+          }
+
+          // Use the shared ExecutionEngine — the single source of truth for execution.
+          // executionMode and functionContract are sourced exclusively from the Question record.
+          const engineResult: EngineResult = await executionEngine.execute({
+            code: attempt.answer || '',
+            language: attemptLanguage,
+            executionMode: question.executionMode as 'FULL_PROGRAM' | 'FUNCTION',
+            functionContract: (question.functionContract as any) ?? null,
+            comparisonMode: (question as any).comparisonMode || 'TRIMMED',
+            testCases: question.testCases.map((tc: any) => ({
+              id: tc.id,
+              input: tc.input,
+              expectedOutput: tc.expectedOutput,
+              isHidden: tc.isHidden ?? false,
+            })),
+          });
+
+          // Map EngineResult status to Prisma ExecutionStatus
+          const prismaStatus =
+            engineResult.status === 'PASSED'
+              ? ExecutionStatus.PASSED
+              : engineResult.status === 'FAILED'
+              ? ExecutionStatus.FAILED
+              : ExecutionStatus.ERROR;
+
           await gradingRepository.createExecution(
             attempt.id,
             attempt.language || 'javascript',
             attempt.answer || '',
-            executionResult.status,
-            executionResult.output,
-            executionResult.testCaseResults,
-            executionResult.executionTimeMs
+            prismaStatus,
+            engineResult.output,
+            engineResult.testCaseResults,
+            engineResult.executionTimeMs
           );
 
-          if (executionResult.status === ExecutionStatus.PASSED) {
-            // For MVP, all test cases must pass to get points.
+          if (engineResult.status === 'PASSED') {
             isCorrect = true;
             qScore = qMaxScore;
-          } else if (executionResult.status === ExecutionStatus.FAILED && executionResult.passCount > 0) {
-             // Partial credit MVP: 
-             qScore = Math.round((executionResult.passCount / question.testCases.length) * qMaxScore);
+          } else if (engineResult.status === 'FAILED' && engineResult.passCount > 0) {
+            // Partial credit MVP
+            qScore = Math.round((engineResult.passCount / question.testCases.length) * qMaxScore);
           }
 
           await gradingRepository.createQuestionResult(result.id, question.id, qScore, qMaxScore, isCorrect);
@@ -123,207 +168,11 @@ export class GradingService {
         totalScore += qScore;
       }
 
-      await gradingRepository.finalizeResult(result.id, totalScore, maxScore);
+      const passingPercentage = data.assessment?.passingPercentage ?? 60;
+      await gradingRepository.finalizeResult(result.id, totalScore, maxScore, passingPercentage);
 
     } catch (error) {
       console.error('Error during auto-grading:', error);
-    }
-  }
-
-  private async executeCode(code: string, language: string, testCases: any[]) {
-    let globalOutput = '';
-    let passCount = 0;
-    let globalExecutionTimeMs = 0;
-    const testCaseResults = [];
-    
-    const JUDGE0_LANGUAGE_MAP: Record<string, { id: number; label: string }> = {
-      javascript: { id: 97,  label: 'JavaScript (Node.js v20)' },
-      python:     { id: 100, label: 'Python (v3.12)' },
-      cpp:        { id: 105, label: 'C++ (GCC v14.1)' },
-      java:       { id: 91,  label: 'Java (JDK v17)' },
-      sql:        { id: 82,  label: 'SQL (SQLite 3)' },
-    };
-
-    const langConfig = JUDGE0_LANGUAGE_MAP[language] || JUDGE0_LANGUAGE_MAP.javascript;
-
-    try {
-      for (const tc of testCases) {
-        let tcPassed = false;
-        let tcOutput = null;
-        let tcError = null;
-        let wrappedCode = '';
-        let stdinPayload = '';
-
-        if (language === 'cpp' || language === 'java') {
-          wrappedCode = code; // No wrapper, reads from stdin
-          stdinPayload = normalizeStdinForNative(tc.input);
-        } else {
-          // Javascript and Python wrappers
-          let fnName = 'solution';
-          const pyMatch = code.match(/def\s+([a-zA-Z0-9_]+)\s*\(/);
-          const jsMatch = code.match(/(?:function\s+([a-zA-Z0-9_]+)\s*\()|(?:(?:const|let|var)\s+([a-zA-Z0-9_]+)\s*=\s*(?:function|\(.*=>|.*=>))/);
-          if (language === 'python' && pyMatch) {
-            fnName = pyMatch[1];
-          } else if (jsMatch) {
-            fnName = jsMatch[1] || jsMatch[2] || 'solution';
-          }
-
-          if (language === 'python') {
-            wrappedCode = `
-${code}
-import sys
-import json
-try:
-  fn_name = '${fnName}'
-  fn = locals().get(fn_name)
-  if fn and callable(fn):
-      args = (${tc.input},)
-      result = fn(*args)
-      print("\\n---AGY_RESULT_DELIM---\\n" + json.dumps(result), end='')
-  else:
-      pass
-except Exception as e:
-  print(e)
-`;
-          } else {
-            wrappedCode = `
-${code}
-try {
-  let __fn = null;
-  if (typeof module !== 'undefined' && typeof module.exports === 'function') {
-    __fn = module.exports;
-  } else if (typeof ${fnName} === 'function') {
-    __fn = ${fnName};
-  }
-  
-  if (__fn) {
-    let args = [ ${tc.input} ];
-    const result = __fn(...args);
-    if (result !== undefined) {
-      process.stdout.write("\\n---AGY_RESULT_DELIM---\\n" + JSON.stringify(result));
-    }
-  } else {
-    // If no function, assume they are just printing or we gracefully ignore
-  }
-} catch (e) {
-  process.stdout.write(e.toString());
-}
-`;
-          }
-        }
-
-        let tcStart = performance.now();
-        let stdout = '';
-        let stderr = '';
-        let isSuccess = false;
-
-        let retries = 3;
-        let delay = 1500;
-        while (retries > 0) {
-          try {
-            const response = await fetch('https://ce.judge0.com/submissions?wait=true&base64_encoded=true', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                source_code: Buffer.from(wrappedCode).toString('base64'),
-                language_id: langConfig.id,
-                stdin: Buffer.from(stdinPayload).toString('base64'),
-              }),
-            });
-            
-            if (response.status === 429) {
-                retries--;
-                await new Promise(r => setTimeout(r, delay));
-                delay *= 2;
-                continue;
-            }
-            
-            if (!response.ok) {
-              stderr = await response.text();
-            } else {
-              const data = await response.json();
-              const decodeB64 = (val: string | null | undefined) => val ? Buffer.from(val, 'base64').toString('utf8') : '';
-              stdout = decodeB64(data.stdout);
-              const compileOutput = decodeB64(data.compile_output);
-              stderr = decodeB64(data.stderr) || compileOutput || data.message || '';
-              isSuccess = data.status?.id === 3; // 3 = Accepted
-            }
-            break;
-          } catch (e: any) {
-            retries--;
-            if (retries === 0) {
-                stderr = e.message || 'Execution failed';
-            } else {
-                await new Promise(r => setTimeout(r, delay));
-                delay *= 2;
-            }
-          }
-        }
-
-        let rawOutput = stdout.trim();
-        let cleanOutput = rawOutput;
-        if (rawOutput.includes('---AGY_RESULT_DELIM---')) {
-           const parts = rawOutput.split('---AGY_RESULT_DELIM---');
-           cleanOutput = parts[1].trim();
-        }
-        tcOutput = cleanOutput;
-        globalOutput += stdout.trim() + '\n';
-        
-        // Hard error = runtime/compile error (status != Accepted AND != Wrong Answer)
-        // JVM/compiler warnings in stderr are OK as long as code ran (isSuccess or at least produced output)
-        const hasHardError = !isSuccess && !cleanOutput;
-        if (stderr && hasHardError) {
-           tcError = stderr.trim();
-           globalOutput += tcError + '\n';
-        }
-
-        const normalizeOut = (s: string) => s.trim().split('\n').map(l => l.trim()).filter(l => l !== '').join('\n');
-        const expectedClean = normalizeOut(tc.expectedOutput);
-        const actualClean = normalizeOut(cleanOutput);
-        let isMatch = false;
-        
-        let expectedObj, actualObj;
-        try { expectedObj = JSON.parse(expectedClean); } catch(e) { expectedObj = expectedClean; }
-        try { actualObj = JSON.parse(actualClean); } catch(e) { actualObj = actualClean; }
-        
-        isMatch = JSON.stringify(expectedObj) === JSON.stringify(actualObj);
-
-        // Pass if output matches and no hard error (ignore stderr warnings for C++/Java)
-        if (isMatch && !hasHardError) {
-          tcPassed = true;
-          passCount++;
-        }
-
-        let tcEnd = performance.now();
-        globalExecutionTimeMs += (tcEnd - tcStart);
-
-        testCaseResults.push({
-          testCaseId: tc.id,
-          passed: tcPassed,
-          output: tcOutput,
-          error: tcError
-        });
-      }
-
-      const status = passCount === testCases.length ? ExecutionStatus.PASSED : ExecutionStatus.FAILED;
-
-      return {
-        status,
-        output: globalOutput.trim(),
-        testCaseResults,
-        passCount,
-        executionTimeMs: Math.round(globalExecutionTimeMs)
-      };
-
-    } catch (e: any) {
-      console.error('Execution error', e);
-      return {
-        status: ExecutionStatus.ERROR,
-        output: e.message,
-        testCaseResults: [],
-        passCount: 0,
-        executionTimeMs: 0
-      };
     }
   }
 }

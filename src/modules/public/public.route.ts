@@ -13,6 +13,7 @@ router.use('/sessions', requireSession); // Apply to all /sessions routes
 
 router.get('/sessions/questions', publicController.getSessionQuestions);
 router.post('/sessions/questions/:questionId/attempt', publicController.submitAttempt);
+router.post('/sessions/questions/:questionId/run', publicController.runCode);
 router.post('/sessions/events', publicController.logEvent);
 router.post('/sessions/finish', publicController.finishSession);
 

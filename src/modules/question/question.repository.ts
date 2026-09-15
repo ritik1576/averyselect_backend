@@ -1,5 +1,6 @@
+import { getStarterCode, isStaleStarterCode } from "../../utils/starterCode.js";
 import { prisma } from '../../lib/prisma.js';
-import { QuestionType } from '@prisma/client';
+import { QuestionType, ExecutionMode } from '@prisma/client';
 
 // Define complex types for inputs
 export type CreateOptionData = {
@@ -25,7 +26,29 @@ export type CreateQuestionData = {
   testCases?: CreateTestCaseData[];
   language?: string;
   starter_code?: string;
+  executionMode?: ExecutionMode;
+  functionContract?: any;
 };
+
+
+const CODING_LANGUAGES = ["javascript", "python", "java", "cpp"];
+
+function buildQuestionLanguages(data: CreateQuestionData) {
+  const mode = data.executionMode || "FULL_PROGRAM";
+  const contract = data.functionContract || null;
+  return CODING_LANGUAGES.map((lang) => {
+    let sCode = getStarterCode(lang, mode, contract);
+    if (data.language && data.language.toLowerCase() === lang && data.starter_code) {
+      if (mode !== "FUNCTION" || !isStaleStarterCode(data.starter_code)) {
+        sCode = data.starter_code;
+      }
+    }
+    return {
+      language: { connectOrCreate: { where: { name: lang }, create: { name: lang } } },
+      starterCode: sCode
+    };
+  });
+}
 
 export class QuestionRepository {
   async create(data: CreateQuestionData) {
@@ -38,18 +61,24 @@ export class QuestionRepository {
         points: data.points || 1,
         estimatedTimeSeconds: data.estimated_time_seconds,
         difficulty: data.difficulty || 3,
+        executionMode: data.executionMode,
+        functionContract: data.functionContract,
         options: data.options ? {
           create: data.options
         } : undefined,
         testCases: data.testCases ? {
           create: data.testCases
         } : undefined,
-        questionLanguages: (data.language && data.starter_code) ? {
-          create: [{
-            language: { connectOrCreate: { where: { name: data.language }, create: { name: data.language } } },
-            starterCode: data.starter_code
-          }]
-        } : undefined,
+        questionLanguages: data.type === QuestionType.CODING
+          ? { create: buildQuestionLanguages(data) }
+          : (data.language && data.starter_code)
+            ? {
+                create: [{
+                  language: { connectOrCreate: { where: { name: data.language }, create: { name: data.language } } },
+                  starterCode: data.starter_code
+                }]
+              }
+            : undefined,
       },
       include: {
         options: true,
@@ -169,6 +198,8 @@ export class QuestionRepository {
         points: data.points,
         estimatedTimeSeconds: data.estimated_time_seconds,
         difficulty: data.difficulty || 3,
+        executionMode: data.executionMode,
+        functionContract: data.functionContract !== undefined ? data.functionContract : undefined,
         // Atomically replace all options if provided
         options: data.options ? {
           deleteMany: {},
@@ -179,13 +210,20 @@ export class QuestionRepository {
           deleteMany: {},
           create: data.testCases
         } : undefined,
-        questionLanguages: (data.language && data.starter_code) ? {
-          deleteMany: {},
-          create: [{
-            language: { connectOrCreate: { where: { name: data.language }, create: { name: data.language } } },
-            starterCode: data.starter_code
-          }]
-        } : undefined,
+        questionLanguages: (data.type === QuestionType.CODING || (!data.type && (data.executionMode || data.functionContract)))
+          ? {
+              deleteMany: {},
+              create: buildQuestionLanguages(data as CreateQuestionData)
+            }
+          : (data.language && data.starter_code)
+            ? {
+                deleteMany: {},
+                create: [{
+                  language: { connectOrCreate: { where: { name: data.language }, create: { name: data.language } } },
+                  starterCode: data.starter_code
+                }]
+              }
+            : undefined,
       },
       include: {
         options: true,
