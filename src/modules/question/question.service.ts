@@ -18,10 +18,24 @@ export class QuestionService {
       
       // Ensure testCases is undefined for multiple choice
       data.testCases = undefined;
+      data.executionMode = 'FULL_PROGRAM';
+      data.functionContract = null;
     } 
     else if (data.type === QuestionType.CODING) {
       if (!data.testCases || data.testCases.length < 1) {
         throw new AppError('Coding questions must have at least 1 test case.', 400);
+      }
+      
+      // Execution Invariants
+      const mode = data.executionMode || 'FULL_PROGRAM';
+      if (mode === 'FULL_PROGRAM') {
+        if (data.functionContract !== null && data.functionContract !== undefined) {
+          throw new AppError('FULL_PROGRAM questions must not define a functionContract.', 400);
+        }
+      } else if (mode === 'FUNCTION') {
+        if (!data.functionContract) {
+          throw new AppError('FUNCTION questions must define a valid functionContract.', 400);
+        }
       }
       
       // Ensure options is undefined for coding questions
@@ -31,6 +45,8 @@ export class QuestionService {
     else if (data.type === QuestionType.TEXT) {
       data.options = undefined;
       data.testCases = undefined;
+      data.executionMode = 'FULL_PROGRAM';
+      data.functionContract = null;
     }
 
     // 2. Delegate to repository
@@ -53,6 +69,29 @@ export class QuestionService {
     
     if (question._count?.assessments > 0) {
       throw new AppError('This question is already used in an assessment and cannot be edited. Please create a new question.', 400);
+    }
+    
+    const finalType = data.type || question.type;
+    
+    if (finalType !== QuestionType.CODING) {
+      if (data.executionMode !== undefined || data.functionContract !== undefined) {
+         throw new AppError('executionMode and functionContract can only be provided for CODING questions.', 400);
+      }
+      // If changing an existing CODING question to a non-CODING type, we must reset the execution configuration
+      if (question.type === QuestionType.CODING) {
+        data.executionMode = 'FULL_PROGRAM';
+        data.functionContract = null;
+      }
+    } else {
+      const mode = data.executionMode !== undefined ? data.executionMode : (question as any).executionMode;
+      const contract = data.functionContract !== undefined ? data.functionContract : (question as any).functionContract;
+      
+      if (mode === 'FULL_PROGRAM' && contract !== null && contract !== undefined) {
+          throw new AppError('FULL_PROGRAM questions must not define a functionContract.', 400);
+      }
+      if (mode === 'FUNCTION' && !contract) {
+          throw new AppError('FUNCTION questions must define a valid functionContract.', 400);
+      }
     }
     
     // Perform update

@@ -348,7 +348,7 @@ function buildJavaWrapper(
   const javaArg = javaArgsList.join(', ');
 
   const sanitizedCode = code.replace(
-    /\bpublic\s+(?:final\s+|abstract\s+)?class\s+([A-Za-z0-9_]+)/g,
+    /\bpublic\s+(?:final\s+|abstract\s+)?class\s+(Solution)\b/g,
     'class $1'
   );
   const className = 'Solution';

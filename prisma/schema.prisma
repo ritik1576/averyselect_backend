@@ -47,6 +47,9 @@ model Question {
   deletedAt            DateTime?
   estimatedTimeSeconds Int?
   difficulty           Int                  @default(3)
+  executionMode        ExecutionMode        @default(FULL_PROGRAM)
+  functionContract     Json?
+  comparisonMode       ComparisonMode       @default(TRIMMED)
   assessments          AssessmentQuestion[]
   options              Option[]
   attempts             QuestionAttempt[]
@@ -121,21 +124,21 @@ model QuestionLanguage {
 }
 
 model Assessment {
-  id              String                     @id @default(uuid())
-  companyId       String
-  title           String
-  description     String?
-  durationMinutes Int?
-  passingPercentage Float?                   @default(60)
-  isPublished     Boolean                    @default(false)
-  createdAt       DateTime                   @default(now())
-  updatedAt       DateTime                   @updatedAt
-  deletedAt       DateTime?
-  links           AssessmentLink[]
-  questions       AssessmentQuestion[]
-  securitySetting AssessmentSecuritySetting?
-  company         Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  sessions        Session[]
+  id                String                     @id @default(uuid())
+  companyId         String
+  title             String
+  description       String?
+  durationMinutes   Int?
+  passingPercentage Float?                     @default(60)
+  isPublished       Boolean                    @default(false)
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
+  deletedAt         DateTime?
+  links             AssessmentLink[]
+  questions         AssessmentQuestion[]
+  securitySetting   AssessmentSecuritySetting?
+  company           Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  sessions          Session[]
 
   @@map("assessments")
 }
@@ -221,6 +224,7 @@ model QuestionAttempt {
   question    Question      @relation(fields: [questionId], references: [id], onDelete: Cascade)
   session     Session       @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
+  @@unique([sessionId, questionId])
   @@map("question_attempts")
 }
 
@@ -294,6 +298,11 @@ model ResultDomain {
   @@map("result_domains")
 }
 
+enum ExecutionMode {
+  FULL_PROGRAM
+  FUNCTION
+}
+
 enum QuestionType {
   MULTIPLE_CHOICE
   CODING
@@ -333,4 +342,12 @@ enum ActivityEventType {
   LARGE_PASTE_DETECTED
   QUESTION_SUBMITTED
   ASSESSMENT_SUBMITTED
+}
+
+enum ComparisonMode {
+  EXACT
+  TRIMMED
+  TOKENIZED
+  JSON
+  FLOAT
 }
