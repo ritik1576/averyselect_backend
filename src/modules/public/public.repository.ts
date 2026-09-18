@@ -3,7 +3,8 @@ import { AttemptStatus, SessionStatus, ActivityEventType } from '@prisma/client'
 
 export class PublicRepository {
   async findAssessmentByToken(token: string) {
-    return await prisma.assessmentLink.findUnique({
+    // 1. Check assessmentLink
+    const link = await prisma.assessmentLink.findUnique({
       where: { token },
       include: {
         assessment: {
@@ -15,6 +16,96 @@ export class PublicRepository {
         }
       }
     });
+    if (link) return link;
+
+    // 2. Check assessmentInvitation
+    const invite = await prisma.assessmentInvitation.findUnique({
+      where: { token },
+      include: {
+        assessment: {
+          include: {
+            company: true,
+            securitySetting: true,
+            _count: { select: { questions: true } }
+          }
+        }
+      }
+    });
+    if (invite) {
+      return {
+        id: invite.id,
+        assessmentId: invite.assessmentId,
+        token: invite.token,
+        email: invite.email,
+        isActive: !(invite.status === "EXPIRED" || (invite.expiresAt && new Date() > invite.expiresAt)),
+        assessment: invite.assessment,
+      };
+    }
+
+    return null;
+  }
+
+  async markInvitationOpened(token: string) {
+    try {
+      const invite = await prisma.assessmentInvitation.findUnique({ where: { token } });
+      if (invite && invite.status === "SENT") {
+        await prisma.assessmentInvitation.update({
+          where: { token },
+          data: { status: "OPENED", openedAt: new Date() }
+        });
+      }
+    } catch (e) {
+      console.error("Error marking invitation opened:", e);
+    }
+  }
+
+  async markInvitationStarted(token: string, email: string, assessmentId: string) {
+    try {
+      // First try by token
+      const inviteByToken = await prisma.assessmentInvitation.findUnique({ where: { token } });
+      if (inviteByToken && (inviteByToken.status === "SENT" || inviteByToken.status === "OPENED")) {
+        await prisma.assessmentInvitation.update({
+          where: { token },
+          data: { status: "STARTED", startedAt: new Date() }
+        });
+        return;
+      }
+
+      // Also match by email and assessmentId if candidate joined via public link
+      const inviteByEmail = await prisma.assessmentInvitation.findFirst({
+        where: { assessmentId, email: { equals: email, mode: "insensitive" } },
+        orderBy: { sentAt: "desc" }
+      });
+      if (inviteByEmail && (inviteByEmail.status === "SENT" || inviteByEmail.status === "OPENED")) {
+        await prisma.assessmentInvitation.update({
+          where: { id: inviteByEmail.id },
+          data: { status: "STARTED", startedAt: new Date() }
+        });
+      }
+    } catch (e) {
+      console.error("Error marking invitation started:", e);
+    }
+  }
+
+  async markInvitationCompleted(candidateId: string, assessmentId: string) {
+    try {
+      const candidate = await prisma.candidate.findUnique({ where: { id: candidateId } });
+      if (!candidate) return;
+
+      const invite = await prisma.assessmentInvitation.findFirst({
+        where: { assessmentId, email: { equals: candidate.email, mode: "insensitive" } },
+        orderBy: { sentAt: "desc" }
+      });
+
+      if (invite && invite.status !== "COMPLETED") {
+        await prisma.assessmentInvitation.update({
+          where: { id: invite.id },
+          data: { status: "COMPLETED", completedAt: new Date() }
+        });
+      }
+    } catch (e) {
+      console.error("Error marking invitation completed:", e);
+    }
   }
 
   async upsertCandidate(companyId: string, email: string, name: string) {

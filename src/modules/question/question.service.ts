@@ -68,7 +68,7 @@ export class QuestionService {
     const question = await this.getQuestionById(id, companyId);
     
     if (question._count?.assessments > 0) {
-      throw new AppError('This question is already used in an assessment and cannot be edited. Please create a new question.', 400);
+      throw new AppError('Cannot edit a question that is already assigned to an assessment. Duplicate the question to make changes.', 400);
     }
     
     const finalType = data.type || question.type;

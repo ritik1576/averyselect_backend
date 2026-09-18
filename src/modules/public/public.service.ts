@@ -19,6 +19,9 @@ export class PublicService {
       throw new AppError('This assessment has been deleted', 404);
     }
 
+    // Track invitation opened
+    await publicRepository.markInvitationOpened(token);
+
     // Only return safe public info
     return {
       title: link.assessment.title,
@@ -36,6 +39,11 @@ export class PublicService {
     const link = await publicRepository.findAssessmentByToken(token);
     if (!link || !link.isActive || link.assessment.deletedAt !== null) {
       throw new AppError('Invalid or inactive assessment link', 403);
+    }
+
+    // Security check: If it's a private invitation, enforce the email matches
+    if ('email' in link && (link as any).email && (link as any).email.toLowerCase() !== email.toLowerCase()) {
+      throw new AppError('This invitation is registered to a different email address.', 403);
     }
 
     const companyId = link.assessment.companyId;
@@ -58,6 +66,9 @@ export class PublicService {
     } else {
       session = await publicRepository.createSession(candidate.id, assessmentId);
     }
+
+    // Track invitation started
+    await publicRepository.markInvitationStarted(token, email, assessmentId);
 
     // 4. Generate Session JWT
     const sessionToken = jwt.sign(
@@ -236,6 +247,7 @@ export class PublicService {
     if (session.status === 'COMPLETED') return session; // idempotent — already completed
 
     const updatedSession = await publicRepository.finishSession(sessionId);
+    await publicRepository.markInvitationCompleted(session.candidateId, session.assessmentId);
 
     // Trigger auto-grading in the background
     // We intentionally don't await this so the API responds instantly
