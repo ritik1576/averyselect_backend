@@ -1,3 +1,10 @@
+
+const inviteCandidatesSchema = z.object({
+  candidates: z.array(z.object({
+    name: z.string().optional(),
+    email: z.string().email("Invalid email address"),
+  })).min(1, "At least one candidate is required"),
+});
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { AppError } from '../../utils/AppError.js';
@@ -194,6 +201,61 @@ export class AssessmentController {
       data: result,
     });
   });
+
+  // --- Invitation Endpoints ---
+
+  createInvites = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const companyId = req.user!.companyId;
+    const { id: assessmentId } = req.params;
+
+    const parseResult = inviteCandidatesSchema.safeParse(req.body);
+    if (!parseResult.success) {
+      throw new AppError(parseResult.error.issues[0].message, 400);
+    }
+
+    const result = await assessmentService.inviteCandidates(
+      assessmentId,
+      companyId,
+      parseResult.data.candidates
+    );
+
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: `Successfully dispatched ${result.length} invitation(s)`,
+    });
+  });
+
+  getInvites = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const companyId = req.user!.companyId;
+    const { id: assessmentId } = req.params;
+    
+    const page = req.query.page ? parseInt(req.query.page as string, 10) : 1;
+    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : 10;
+    const search = req.query.search as string | undefined;
+
+    const result = await assessmentService.getInvitations(assessmentId, companyId, { page, limit, search });
+
+    res.status(200).json({
+      success: true,
+      data: result.data,
+      meta: result.meta
+    });
+  });
+
+  resendInvite = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const companyId = req.user!.companyId;
+    const { id: assessmentId, inviteId } = req.params;
+
+    const result = await assessmentService.resendInvitation(assessmentId, inviteId, companyId);
+
+    res.status(200).json({
+      success: true,
+      data: result,
+      message: "Invitation resent successfully",
+    });
+  });
 }
+
 
 export const assessmentController = new AssessmentController();

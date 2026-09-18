@@ -120,8 +120,19 @@ export class GradingRepository {
   }
 
   async createQuestionResult(resultId: string, questionId: string, score: number, maxScore: number, isCorrect: boolean) {
-    return await prisma.questionResult.create({
-      data: {
+    return await prisma.questionResult.upsert({
+      where: {
+        resultId_questionId: {
+          resultId,
+          questionId
+        }
+      },
+      update: {
+        score,
+        maxScore,
+        isCorrect
+      },
+      create: {
         resultId,
         questionId,
         score,

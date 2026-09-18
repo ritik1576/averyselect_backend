@@ -139,6 +139,7 @@ model Assessment {
   securitySetting   AssessmentSecuritySetting?
   company           Company                    @relation(fields: [companyId], references: [id], onDelete: Cascade)
   sessions          Session[]
+  invitations       AssessmentInvitation[]
 
   @@map("assessments")
 }
@@ -282,6 +283,7 @@ model QuestionResult {
   question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   result     Result   @relation(fields: [resultId], references: [id], onDelete: Cascade)
 
+  @@unique([resultId, questionId])
   @@map("question_results")
 }
 
@@ -350,4 +352,31 @@ enum ComparisonMode {
   TOKENIZED
   JSON
   FLOAT
+}
+
+model AssessmentInvitation {
+  id           String       @id @default(uuid())
+  assessmentId String
+  email        String
+  name         String?
+  token        String       @unique
+  status       InviteStatus @default(SENT)
+  sentAt       DateTime     @default(now())
+  openedAt     DateTime?
+  startedAt    DateTime?
+  completedAt  DateTime?
+  expiresAt    DateTime?
+  assessment   Assessment   @relation(fields: [assessmentId], references: [id], onDelete: Cascade)
+
+  @@index([assessmentId])
+  @@index([email])
+  @@map("assessment_invitations")
+}
+
+enum InviteStatus {
+  SENT
+  OPENED
+  STARTED
+  COMPLETED
+  EXPIRED
 }

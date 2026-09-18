@@ -463,7 +463,20 @@ export function compareOutput(mode: 'EXACT' | 'TRIMMED' | 'TOKENIZED' | 'JSON' |
       return normExpected === normActual;
     }
     case 'TRIMMED': {
-      return normExpected.trim() === normActual.trim();
+      // Try JSON comparison first: if both sides parse as valid JSON,
+      // compare the parsed structures (key-order-independent for objects,
+      // order-preserved for arrays). This prevents whitespace-only differences
+      // (e.g. [[70,30]] vs [[70, 30]]) from incorrectly failing.
+      const trimmedExp = normExpected.trim();
+      const trimmedAct = normActual.trim();
+      try {
+        const expObj = JSON.parse(trimmedExp);
+        const actObj = JSON.parse(trimmedAct);
+        return JSON.stringify(canonicalize(expObj)) === JSON.stringify(canonicalize(actObj));
+      } catch {
+        // Either side is not valid JSON — fall back to trimmed string comparison
+        return trimmedExp === trimmedAct;
+      }
     }
     case 'TOKENIZED': {
       const tokenize = (s: string) => s.trim().split(/\s+/).filter(Boolean);

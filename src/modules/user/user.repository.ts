@@ -8,12 +8,14 @@ export class UserRepository {
   async findById(id: string) {
     return await prisma.user.findUnique({
       where: { id },
+      include: { company: true },
     });
   }
 
   async findByEmail(email: string) {
     return await prisma.user.findUnique({
       where: { email },
+      include: { company: true },
     });
   }
 

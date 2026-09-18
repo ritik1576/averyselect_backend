@@ -65,7 +65,18 @@ export class GradingService {
       // Authoritative maxScore must be the sum of AssessmentQuestion.points for ALL questions
       // assigned to this assessment, regardless of whether candidate attempted them.
       const assignedQuestions = data.assessment?.questions ?? await gradingRepository.getAssessmentQuestionMapping(data.assessmentId);
-      const maxScore = assignedQuestions.reduce((sum, aq) => sum + (aq.points || 0), 0);
+console.log('ASSIGNED QUESTIONS', assignedQuestions);
+      
+      let maxScore = 0;
+      for (const aq of assignedQuestions) {
+        if (aq.points === undefined || aq.points === null) {
+          console.error(`[grading] CONFIGURATION_ERROR: Missing points mapping for question ${aq.questionId} in assessment ${data.assessmentId}.`);
+          continue;
+        }
+        maxScore += aq.points;
+      }
+
+      const gradedQuestionIds = new Set<string>();
 
       // Iterate through attempts and evaluate
       for (const attempt of data.attempts) {
@@ -166,6 +177,22 @@ export class GradingService {
         }
 
         totalScore += qScore;
+        gradedQuestionIds.add(question.id);
+      }
+
+      // Second pass: Create 0-score results for unattempted questions
+      for (const aq of assignedQuestions) {
+        if (aq.points === undefined || aq.points === null) continue;
+        
+        if (!gradedQuestionIds.has(aq.questionId)) {
+          await gradingRepository.createQuestionResult(
+            result.id,
+            aq.questionId,
+            0,
+            aq.points,
+            false
+          );
+        }
       }
 
       const passingPercentage = data.assessment?.passingPercentage ?? 60;
