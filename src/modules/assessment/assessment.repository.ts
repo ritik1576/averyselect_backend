@@ -248,6 +248,71 @@ export class AssessmentRepository {
       where: { id: linkId }
     });
   }
+
+  // --- Invitation Management ---
+
+  async createInvitation(data: { assessmentId: string; email: string; name?: string | null; token: string }) {
+    return await prisma.assessmentInvitation.create({
+      data: {
+        assessmentId: data.assessmentId,
+        email: data.email,
+        name: data.name,
+        token: data.token,
+        status: "SENT",
+      }
+    });
+  }
+
+  async findInvitationsByAssessment(
+    assessmentId: string, 
+    options: { page?: number; limit?: number; search?: string } = {}
+  ) {
+    const page = options.page || 1;
+    const limit = options.limit || 10;
+    const skip = (page - 1) * limit;
+
+    const where: any = { assessmentId };
+    
+    if (options.search) {
+      where.OR = [
+        { email: { contains: options.search, mode: 'insensitive' } },
+        { name: { contains: options.search, mode: 'insensitive' } }
+      ];
+    }
+
+    const [data, total] = await Promise.all([
+      prisma.assessmentInvitation.findMany({
+        where,
+        orderBy: { sentAt: "desc" },
+        skip,
+        take: limit
+      }),
+      prisma.assessmentInvitation.count({ where })
+    ]);
+
+    return { data, meta: { total, page, limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  async findInvitationByEmailAndAssessment(assessmentId: string, email: string) {
+    return await prisma.assessmentInvitation.findFirst({
+      where: { assessmentId, email },
+      orderBy: { sentAt: "desc" }
+    });
+  }
+
+  async findInvitationById(inviteId: string) {
+    return await prisma.assessmentInvitation.findUnique({
+      where: { id: inviteId }
+    });
+  }
+
+  async updateInvitationSentAt(inviteId: string) {
+    return await prisma.assessmentInvitation.update({
+      where: { id: inviteId },
+      data: { sentAt: new Date() }
+    });
+  }
 }
+
 
 export const assessmentRepository = new AssessmentRepository();

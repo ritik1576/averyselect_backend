@@ -21,4 +21,9 @@ router.patch('/:id/links/:linkId', assessmentController.updateLinkStatus);
 // Results
 router.get('/:id/results', assessmentController.getResults);
 
+// Invites
+router.post('/:id/invites', assessmentController.createInvites);
+router.get('/:id/invites', assessmentController.getInvites);
+router.post('/:id/invites/:inviteId/resend', assessmentController.resendInvite);
+
 export default router;

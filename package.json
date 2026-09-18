@@ -10,7 +10,8 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js"
+    "start": "node dist/server.js",
+    "prestart": "npm run build"
   },
   "dependencies": {
     "@prisma/client": "^5.10.2",
@@ -23,10 +24,12 @@
     "express": "^4.18.3",
     "isolated-vm": "^5.0.4",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^10.0.10",
     "typescript": "^5.4.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.2",
     "prisma": "^5.10.2",
     "tsx": "^4.7.1"
   }
