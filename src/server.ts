@@ -1,4 +1,5 @@
 import { gradingService } from './modules/grading/grading.service.js';
+import { sessionSweeper } from './modules/session/session.sweeper.js';
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import { env } from './config/env.js';
@@ -63,6 +64,7 @@ app.use(errorHandler);
 
 app.listen(port, () => {
   gradingService.recoverIncompleteGrading();
+  sessionSweeper.start();
 
   console.log(`Server is running in ${env.NODE_ENV} mode on port ${port}`);
 });

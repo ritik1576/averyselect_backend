@@ -18,6 +18,9 @@ export class PublicService {
     if (link.assessment.deletedAt !== null) {
       throw new AppError('This assessment has been deleted', 404);
     }
+    if (!link.assessment.isPublished) {
+      throw new AppError('This assessment is currently unpublished or in draft status.', 403);
+    }
 
     // Track invitation opened
     await publicRepository.markInvitationOpened(token);
@@ -37,8 +40,8 @@ export class PublicService {
   async startSession(token: string, email: string, name: string) {
     // 1. Verify link
     const link = await publicRepository.findAssessmentByToken(token);
-    if (!link || !link.isActive || link.assessment.deletedAt !== null) {
-      throw new AppError('Invalid or inactive assessment link', 403);
+    if (!link || !link.isActive || link.assessment.deletedAt !== null || !link.assessment.isPublished) {
+      throw new AppError('This assessment is currently unavailable, inactive, or unpublished.', 403);
     }
 
     // Security check: If it's a private invitation, enforce the email matches

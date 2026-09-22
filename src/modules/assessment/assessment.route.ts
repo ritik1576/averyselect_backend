@@ -12,6 +12,8 @@ router.get('/', assessmentController.getAll);
 router.get('/:id', assessmentController.getById);
 router.put('/:id', assessmentController.update);
 router.delete('/:id', assessmentController.delete);
+router.post('/:id/archive', assessmentController.archive);
+router.post('/:id/duplicate', assessmentController.duplicate);
 
 // Link routes
 router.post('/:id/links', assessmentController.createLink);

@@ -63,11 +63,21 @@ export class AssessmentRepository {
     limit: number = 10,
     search?: string,
     sortBy?: string,
-    sortDir?: string
+    sortDir?: string,
+    status?: 'ACTIVE' | 'ARCHIVED' | 'ALL'
   ) {
     const skip = (page - 1) * limit;
 
-    const where: any = { companyId, deletedAt: null };
+    const where: any = { companyId };
+    
+    if (status === 'ARCHIVED') {
+      where.deletedAt = { not: null };
+    } else if (status === 'ALL') {
+      // Do not filter by deletedAt
+    } else {
+      // Default to ACTIVE
+      where.deletedAt = null;
+    }
     
     if (search?.trim()) {
       const term = search.trim();
@@ -96,7 +106,7 @@ export class AssessmentRepository {
         where,
         include: {
           _count: {
-            select: { questions: true, sessions: true }
+            select: { questions: true, sessions: true, invitations: true }
           }
         },
         orderBy,
@@ -108,8 +118,13 @@ export class AssessmentRepository {
       })
     ]);
 
+    const mappedData = data.map(item => ({
+      ...item,
+      hasCandidateActivity: item._count.sessions > 0 || item._count.invitations > 0
+    }));
+
     return {
-      data,
+      data: mappedData,
       meta: {
         total,
         page,
@@ -187,13 +202,27 @@ export class AssessmentRepository {
   }
 
   async delete(id: string, companyId: string) {
-    // Soft Delete
+    // Soft Delete (Archive)
     return await prisma.assessment.update({
       where: { id },
       data: {
         deletedAt: new Date()
       }
     });
+  }
+
+  async hardDelete(id: string, companyId: string) {
+    return await prisma.assessment.delete({
+      where: { id, companyId }
+    });
+  }
+
+  async countCandidateActivity(id: string): Promise<number> {
+    const [sessionCount, inviteCount] = await Promise.all([
+      prisma.session.count({ where: { assessmentId: id } }),
+      prisma.assessmentInvitation.count({ where: { assessmentId: id } })
+    ]);
+    return sessionCount + inviteCount;
   }
 
   // --- Link Management ---
@@ -310,6 +339,16 @@ export class AssessmentRepository {
     return await prisma.assessmentInvitation.update({
       where: { id: inviteId },
       data: { sentAt: new Date() }
+    });
+  }
+
+  /** Count sessions that are currently active (STARTED or IN_PROGRESS) for an assessment. */
+  async countActiveSessionsByAssessment(assessmentId: string): Promise<number> {
+    return await prisma.session.count({
+      where: {
+        assessmentId,
+        status: { in: ["STARTED", "IN_PROGRESS"] }
+      }
     });
   }
 }

@@ -29,8 +29,8 @@ const assessmentQuestionSchema = z.object({
 const createAssessmentSchema = z.object({
   title: z.string().min(3, 'Title must be at least 3 characters'),
   description: z.string().optional(),
-  durationMinutes: z.number().int().positive('Duration must be a positive number').optional(),
-  passingPercentage: z.number().min(0).max(100).optional(),
+  durationMinutes: z.number({ error: 'Duration must be between 5 and 180 minutes.' }).int().min(5, 'Duration must be between 5 and 180 minutes.').max(180, 'Duration must be between 5 and 180 minutes.'),
+  passingPercentage: z.number({ error: 'Pass percentage must be between 10 and 100%.' }).min(10, 'Pass percentage must be between 10 and 100%.').max(100, 'Pass percentage must be between 10 and 100%.'),
   isPublished: z.boolean().optional(),
   securitySetting: assessmentSecuritySettingSchema.optional(),
   questions: z.array(assessmentQuestionSchema).optional().refine(
@@ -81,8 +81,9 @@ export class AssessmentController {
     const search = req.query.search as string;
     const sortBy = req.query.sortBy as string;
     const sortDir = req.query.sortDir as string;
+    const status = (req.query.status as string) || 'ACTIVE'; // 'ACTIVE', 'ARCHIVED', 'ALL'
     
-    const results = await assessmentService.getAllAssessments(companyId, page, limit, search, sortBy, sortDir);
+    const results = await assessmentService.getAllAssessments(companyId, page, limit, search, sortBy, sortDir, status as any);
     
     res.status(200).json({
       success: true,
@@ -133,6 +134,31 @@ export class AssessmentController {
       message: 'Assessment deleted successfully',
     });
   });
+  archive = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const companyId = req.user!.companyId;
+    const { id } = req.params;
+    
+    await assessmentService.archiveAssessment(id, companyId);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Assessment archived successfully',
+    });
+  });
+
+  duplicate = catchAsync(async (req: Request, res: Response, next: NextFunction) => {
+    const companyId = req.user!.companyId;
+    const { id } = req.params;
+    
+    const result = await assessmentService.duplicateAssessment(id, companyId);
+    
+    res.status(201).json({
+      success: true,
+      data: result,
+      message: 'Assessment duplicated successfully',
+    });
+  });
+
 
   // --- Link Management ---
 
