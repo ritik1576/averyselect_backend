@@ -20,17 +20,28 @@ function computeStatus(session: any): string {
 function computeMaxScore(session: any): number {
   const questions = session.assessment?.questions ?? [];
   const trueMax = questions.reduce(
-    (acc: number, q: any) => acc + (q.question?.points ?? q.points ?? 0), 0
+    (acc: number, q: any) => acc + (q.points ?? q.question?.points ?? 0), 0
   );
-  return trueMax > 0 ? trueMax : (session.result?.maxScore ?? 0);
+  return trueMax > 0 ? trueMax : 0;
 }
 
 /** Map a raw Prisma session row to the flat DTO sent to the frontend. */
 function mapSession(session: any, overrideStatus?: string) {
   const status = overrideStatus ?? computeStatus(session);
-  const maxScore = computeMaxScore(session);
-  const totalScore = session.result?.totalScore ?? 0;
-  const percentage = maxScore > 0 ? (totalScore / maxScore) * 100 : 0;
+  
+  let totalScore = 0;
+  let maxScore = 0;
+  let percentage = 0;
+
+  if (session.result) {
+    totalScore = session.result.totalScore;
+    maxScore = session.result.maxScore;
+    percentage = session.result.percentage;
+  } else {
+    totalScore = 0;
+    maxScore = computeMaxScore(session);
+    percentage = 0;
+  }
 
   // Cap completedAt at startedAt + durationMinutes so time-taken is never > test duration
   let completedAt = session.completedAt;

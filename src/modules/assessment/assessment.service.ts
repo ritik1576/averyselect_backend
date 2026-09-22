@@ -25,9 +25,10 @@ export class AssessmentService {
     limit: number = 10,
     search?: string,
     sortBy?: string,
-    sortDir?: string
+    sortDir?: string,
+    status?: 'ACTIVE' | 'ARCHIVED' | 'ALL'
   ) {
-    return await assessmentRepository.findAllByCompany(companyId, page, limit, search, sortBy, sortDir);
+    return await assessmentRepository.findAllByCompany(companyId, page, limit, search, sortBy, sortDir, status);
   }
 
   async getAssessmentById(id: string, companyId: string) {
@@ -36,15 +37,30 @@ export class AssessmentService {
     if (!assessment) {
       throw new AppError('Assessment not found', 404);
     }
-    
-    return assessment;
+
+    // Attach live active session count so the frontend can warn the recruiter
+    const activeSessionCount = await assessmentRepository.countActiveSessionsByAssessment(id);
+    return { ...assessment, activeSessionCount };
   }
 
   async updateAssessment(id: string, companyId: string, data: Partial<CreateAssessmentData>) {
     // 1. Verify existence and ownership
     await this.getAssessmentById(id, companyId);
 
-    // 2. If updating questions, verify ownership
+    // 2. Guard: block structural edits (questions / points / duration) when active sessions exist.
+    //    Settings-only changes (toggle, security flags) are still allowed.
+    const isStructuralEdit = data.questions !== undefined || data.durationMinutes !== undefined || data.passingPercentage !== undefined;
+    if (isStructuralEdit) {
+      const activeCount = await assessmentRepository.countActiveSessionsByAssessment(id);
+      if (activeCount > 0) {
+        throw new AppError(
+          `Cannot edit this assessment while ${activeCount} candidate${activeCount > 1 ? "s are" : " is"} actively taking it. Wait for all active sessions to finish or expire.`,
+          409
+        );
+      }
+    }
+
+    // 3. If updating questions, verify ownership
     if (data.questions && data.questions.length > 0) {
       const questionIds = data.questions.map(q => q.questionId);
       const validCount = await questionRepository.countByIds(questionIds, companyId);
@@ -54,16 +70,94 @@ export class AssessmentService {
       }
     }
 
-    // 3. Perform update
+    // 4. Perform update
     return await assessmentRepository.update(id, data);
   }
 
   async deleteAssessment(id: string, companyId: string) {
     // 1. Verify existence and ownership
-    await this.getAssessmentById(id, companyId);
+    const assessment = await this.getAssessmentById(id, companyId);
+
+    // 2. Check Candidate Activity
+    const activityCount = await assessmentRepository.countCandidateActivity(id);
+
+    // 3. Delete Rules: ONLY Draft with ZERO candidate activity
+    if (!assessment.isPublished && activityCount === 0) {
+      return await assessmentRepository.hardDelete(id, companyId);
+    } else {
+      throw new AppError("Hard delete is only allowed for Draft assessments with no candidate activity.", 409);
+    }
+  }
+
+  async archiveAssessment(id: string, companyId: string) {
+    // 1. Verify existence and ownership
+    const assessment = await this.getAssessmentById(id, companyId);
 
     // 2. Perform soft delete
     return await assessmentRepository.delete(id, companyId);
+  }
+
+  async duplicateAssessment(id: string, companyId: string) {
+    // 1. Verify existence and ownership (using internal prisma call to get full tree safely)
+    const existing = await prisma.assessment.findFirst({
+      where: { id, companyId, deletedAt: null },
+      include: {
+        securitySetting: true,
+        questions: true
+      }
+    });
+
+    if (!existing) {
+      throw new AppError('Assessment not found', 404);
+    }
+
+    // 2. Create the duplicate in a transaction
+    return await prisma.$transaction(async (tx) => {
+      let baseTitle = existing.title;
+      // if it ends with (Copy), maybe don't add another, or just let it stack. Stacking is fine.
+      const newTitle = `${baseTitle} (Copy)`;
+
+      const newAssessment = await tx.assessment.create({
+        data: {
+          companyId,
+          title: newTitle,
+          description: existing.description,
+          durationMinutes: existing.durationMinutes,
+          passingPercentage: existing.passingPercentage,
+          isPublished: false, // Must be draft
+          securitySetting: existing.securitySetting ? {
+            create: {
+              fullscreenRequired: existing.securitySetting.fullscreenRequired,
+              tabSwitchDetection: existing.securitySetting.tabSwitchDetection,
+              windowFocusDetection: existing.securitySetting.windowFocusDetection,
+              copyPasteBlocking: existing.securitySetting.copyPasteBlocking,
+              largePasteDetection: existing.securitySetting.largePasteDetection,
+              unusualActivityAlerts: existing.securitySetting.unusualActivityAlerts,
+            }
+          } : undefined,
+          questions: {
+            create: existing.questions.map(q => ({
+              questionId: q.questionId,
+              orderIdx: q.orderIdx,
+              points: q.points
+            }))
+          }
+        },
+        include: {
+          securitySetting: true,
+          questions: {
+            include: {
+              question: true
+            },
+            orderBy: {
+              orderIdx: 'asc'
+            }
+          }
+        }
+      });
+
+      return newAssessment;
+    });
   }
 
   // --- Link Management ---
@@ -145,28 +239,28 @@ export class AssessmentService {
 
     const emailPromises = [];
 
+    // Pre-check for duplicate invitations to ensure atomicity
+    for (const cand of candidates) {
+      const email = cand.email.trim().toLowerCase();
+      const existingInvite = await assessmentRepository.findInvitationByEmailAndAssessment(assessmentId, email);
+      if (existingInvite) {
+        throw new AppError(`Candidate ${email} has already been invited to this assessment.`, 400);
+      }
+    }
+
     for (const cand of candidates) {
       const email = cand.email.trim().toLowerCase();
       const name = cand.name?.trim() || null;
 
-      // 1. Check for duplicate invitation
-      let invitation = await assessmentRepository.findInvitationByEmailAndAssessment(assessmentId, email);
+      // Unique token for this invitation
+      const inviteToken = crypto.randomBytes(16).toString("hex");
 
-      if (!invitation) {
-        // Unique token for this invitation
-        const inviteToken = crypto.randomBytes(16).toString("hex");
-
-        invitation = await assessmentRepository.createInvitation({
-          assessmentId,
-          email,
-          name,
-          token: inviteToken,
-        });
-      } else {
-        // Optional: Update name if provided
-        // And we will re-use the existing token
-        await assessmentRepository.updateInvitationSentAt(invitation.id);
-      }
+      const invitation = await assessmentRepository.createInvitation({
+        assessmentId,
+        email,
+        name,
+        token: inviteToken,
+      });
 
       const invitationUrl = `${frontendUrl}/take/${invitation.token}?email=${encodeURIComponent(email)}${name ? `&name=${encodeURIComponent(name)}` : ""}`;
 
