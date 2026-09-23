@@ -21,6 +21,7 @@ export class EmailService {
   private smtpPort?: number;
   private smtpUser?: string;
   private smtpPass?: string;
+  private transporter: nodemailer.Transporter | null = null;
 
   constructor() {
     this.resendApiKey = process.env.RESEND_API_KEY;
@@ -168,31 +169,36 @@ export class EmailService {
     // 2. SMTP Fallback
     if (this.smtpHost && this.smtpUser && this.smtpPass) {
       try {
-        // Manually resolve to IPv4 because Render doesn't route IPv6 outbound
-        let resolvedHost = this.smtpHost;
-        try {
-          const lookup = await dns.promises.lookup(this.smtpHost, { family: 4 });
-          if (lookup && lookup.address) {
-            resolvedHost = lookup.address;
+        if (!this.transporter) {
+          // Manually resolve to IPv4 because Render doesn't route IPv6 outbound
+          let resolvedHost = this.smtpHost;
+          try {
+            const lookup = await dns.promises.lookup(this.smtpHost, { family: 4 });
+            if (lookup && lookup.address) {
+              resolvedHost = lookup.address;
+            }
+          } catch (dnsErr) {
+            console.warn('[EmailService] Failed to manually resolve IPv4, using original host:', dnsErr);
           }
-        } catch (dnsErr) {
-          console.warn('[EmailService] Failed to manually resolve IPv4, using original host:', dnsErr);
+
+          this.transporter = nodemailer.createTransport({
+            pool: true, // Reuse the same connection (prevents ETIMEDOUT drops from Google)
+            maxConnections: 1,
+            maxMessages: 50,
+            host: resolvedHost,
+            port: this.smtpPort || 465,
+            secure: (this.smtpPort === 465), 
+            auth: {
+              user: this.smtpUser,
+              pass: this.smtpPass,
+            },
+            tls: {
+              servername: this.smtpHost // Required for SSL validation when using raw IP
+            }
+          } as any);
         }
 
-        const transporter = nodemailer.createTransport({
-          host: resolvedHost,
-          port: this.smtpPort || 465,
-          secure: (this.smtpPort === 465), 
-          auth: {
-            user: this.smtpUser,
-            pass: this.smtpPass,
-          },
-          tls: {
-            servername: this.smtpHost // Required for SSL validation when using raw IP
-          }
-        } as any);
-
-        const info = await transporter.sendMail({
+        const info = await this.transporter.sendMail({
           from: this.emailFrom,
           to: params.toEmail,
           subject: subject,
