@@ -56,7 +56,7 @@ describe('Public Controller - WebCam Integrity Events', () => {
     'MULTIPLE_FACES_DETECTED'
   ];
 
-  it.each(validWebcamEvents)('should successfully log %s event and persist metadata', async (eventType) => {
+  it.each(validWebcamEvents)('should successfully log %s event and persist metadata', async (eventType: string) => {
     const response = await request(app)
       .post('/api/public/sessions/events')
       .set('Authorization', `Bearer ${validToken}`)
