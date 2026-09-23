@@ -75,7 +75,13 @@ export class PublicController {
     const { sessionId } = req.sessionData!; // Provided by requireSession
 
     const schema = z.object({
-      eventType: z.enum(['TAB_SWITCHED', 'LARGE_PASTE_DETECTED', 'QUESTION_OPENED', 'CODE_CHANGED', 'FULLSCREEN_EXITED', 'COPY_ATTEMPTED']),
+      eventType: z.enum([
+        'TAB_SWITCHED', 'LARGE_PASTE_DETECTED', 'QUESTION_OPENED', 
+        'CODE_CHANGED', 'FULLSCREEN_EXITED', 'COPY_ATTEMPTED',
+        'CAMERA_STARTED', 'CAMERA_PERMISSION_DENIED', 'CAMERA_ERROR', 
+        'CAMERA_DISCONNECTED', 'FACE_NOT_DETECTED', 'FACE_DETECTED', 
+        'MULTIPLE_FACES_DETECTED'
+      ]),
       details: z.any().optional()
     });
     const parsedBody = schema.parse(req.body);

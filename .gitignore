@@ -14,3 +14,9 @@ yarn-error.log*
 # Build directories
 dist/
 build/
+
+# macOS
+.DS_Store
+
+# Lock files
+package-lock.json
