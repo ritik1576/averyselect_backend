@@ -1,4 +1,9 @@
 import * as nodemailer from 'nodemailer';
+import * as dns from 'dns';
+
+// Force IPv4 first to prevent ENETUNREACH errors on IPv6-disabled cloud environments (like Render)
+dns.setDefaultResultOrder('ipv4first');
+
 export interface SendInvitationParams {
   toEmail: string;
   candidateName?: string | null;
