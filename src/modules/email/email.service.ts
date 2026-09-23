@@ -168,15 +168,29 @@ export class EmailService {
     // 2. SMTP Fallback
     if (this.smtpHost && this.smtpUser && this.smtpPass) {
       try {
+        // Manually resolve to IPv4 because Render doesn't route IPv6 outbound
+        let resolvedHost = this.smtpHost;
+        try {
+          const lookup = await dns.promises.lookup(this.smtpHost, { family: 4 });
+          if (lookup && lookup.address) {
+            resolvedHost = lookup.address;
+          }
+        } catch (dnsErr) {
+          console.warn('[EmailService] Failed to manually resolve IPv4, using original host:', dnsErr);
+        }
+
         const transporter = nodemailer.createTransport({
-          host: this.smtpHost,
+          host: resolvedHost,
           port: this.smtpPort || 465,
           secure: (this.smtpPort === 465), 
           auth: {
             user: this.smtpUser,
             pass: this.smtpPass,
           },
-        });
+          tls: {
+            servername: this.smtpHost // Required for SSL validation when using raw IP
+          }
+        } as any);
 
         const info = await transporter.sendMail({
           from: this.emailFrom,
